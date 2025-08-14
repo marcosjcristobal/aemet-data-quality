@@ -1,0 +1,5 @@
+﻿pandas>=2.2.0
+numpy
+requests
+matplotlib
+python-dotenv
