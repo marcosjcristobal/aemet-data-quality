@@ -2,7 +2,7 @@ from src.data_utils import (
     load_sample_csv, remove_duplicates, handle_missing,
     detect_outliers_zscore, compute_kpis
 )
-from src.quality_checks import flag_physical_limits
+from src.quality_checks import flag_physical_limits, flag_sensor_drift
 from src.plotting import plot_timeseries
 
 # 1) Cargar datos (CSV de ejemplo)
@@ -15,6 +15,9 @@ df = handle_missing(df, method='interpolate')  # 'drop' | 'ffill' | 'bfill' | 'i
 # 3) Flags de outliers (estadísticos) y de límites físicos
 df = detect_outliers_zscore(df, cols=['temp','hum','wind','rain'], z=3.0)
 df = flag_physical_limits(df)
+df = flag_sensor_drift(df, col='temp', window=3, drift_threshold=2.0)
+drift_cols = [c for c in df.columns if c.startswith('flag_drift_')]
+print("Flags de drift totales:", {c: int(df[c].sum()) for c in drift_cols})
 
 # 4) KPIs de calidad (porcentaje de válidos)
 kpis = compute_kpis(df, ['temp','hum','wind','rain'])
