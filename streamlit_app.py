@@ -5,8 +5,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-# Intentamos importar tus utilidades del proyecto
-# y, si algo falla, definimos "fallbacks" compatibles
 try:
     from src.data_utils import (
         load_sample_csv, remove_duplicates, handle_missing,
@@ -179,7 +177,7 @@ if sel_cols:
     st.subheader("KPIs de calidad (válidos)")
     st.dataframe(kpi_df)
 
-    # ---- NUEVO: Conteo de NO válidos (por columna y global) ----
+    # ----Conteo de NO válidos (por columna y global) ----
     rows = []
     invalid_masks = []
 
