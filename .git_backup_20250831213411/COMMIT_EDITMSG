@@ -1,0 +1,18 @@
+Integración con Streamlit
+
+# Conflicts:
+#	src/data_utils.py
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# interactive rebase in progress; onto a06afda
+# Last command done (1 command done):
+#    pick 391d7ad # Integración con Streamlit
+# Next command to do (1 remaining command):
+#    pick 3b0b2fa # Streamlit dashboard + KPIs de no válidos y README
+# You are currently rebasing branch 'main' on 'a06afda'.
+#
+# Changes to be committed:
+#	new file:   streamlit_app.py
+#
