@@ -118,41 +118,53 @@ st.title("AEMET — Data Quality Dashboard")
 root = pathlib.Path(__file__).resolve().parent
 sample_path = root / "data" / "raw" / "sample_measurements.csv"
 
+# --- Sidebar: fuente de datos ---
 with st.sidebar:
     st.header("Opciones")
-    data_src = st.radio("Fuente de datos", ["CSV de ejemplo", "Subir CSV"])
+    data_src = st.radio(
+        "Fuente de datos",
+        ["CSV de ejemplo", "CSV extendido (demo)", "Subir CSV"],
+        index=0
+    )
     uploaded = None
     if data_src == "Subir CSV":
         uploaded = st.file_uploader("CSV con columnas (timestamp, ...)", type=["csv"])
 
     miss_method = st.selectbox("Tratamiento de nulos", ["interpolate", "ffill", "bfill", "drop"], index=0)
-    z_thr = st.slider("Umbral z-score (outliers)", min_value=2.0, max_value=5.0, value=3.0, step=0.1)
+    z_thr = st.slider("Umbral z score (outliers)", min_value=2.0, max_value=5.0, value=3.0, step=0.1)
     drift_col_hint = st.text_input("Columna para drift (ej. temp)", value="temp")
     drift_win = st.number_input("Ventana drift (p.ej. 24)", min_value=2, value=24, step=1)
     drift_thr = st.number_input("Umbral drift", min_value=0.1, value=2.0, step=0.1)
 
-# ------------- Carga -------------
+# --- Carga de datos ---
 @st.cache_data(show_spinner=False)
-def _load_df(_uploaded_bytes):
-    if _uploaded_bytes is not None:
-        df = pd.read_csv(io.BytesIO(_uploaded_bytes))
-        # intentamos parsear timestamp si existe
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        # estandariza nombres
-        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-        return df
-    else:
-        return load_sample_csv(str(sample_path))
+def _load_df_from_path(path_str: str) -> pd.DataFrame:
+    df = pd.read_csv(path_str)
+    # parse timestamp si existe y normaliza cabeceras
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    return df
 
 if data_src == "Subir CSV" and uploaded is not None:
-    df = _load_df(uploaded.read())
+    df = pd.read_csv(uploaded)
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+elif data_src == "CSV extendido (demo)":
+    ext_path = root / "data" / "raw" / "sample_measurements_extended.csv"
+    if not ext_path.exists():
+        st.error(f"No encuentro {ext_path}. Asegúrate de guardarlo ahí.")
+        st.stop()
+    df = _load_df_from_path(str(ext_path))
+    st.caption(f"Ejemplo extendido: {ext_path}")
 else:
-    df = _load_df(None)
-
-if df.empty:
-    st.warning("No hay datos para mostrar.")
-    st.stop()
+    sample_path = root / "data" / "raw" / "sample_measurements.csv"
+    if not sample_path.exists():
+        st.error(f"No encuentro {sample_path}.")
+        st.stop()
+    df = _load_df_from_path(str(sample_path))
+    st.caption(f"Ejemplo básico: {sample_path}")
 
 # ------------- Limpieza + Flags -------------
 df = remove_duplicates(df)
@@ -176,6 +188,65 @@ if sel_cols:
     kpi_df = pd.DataFrame.from_dict(kpis, orient="index")
     st.subheader("KPIs de calidad (válidos)")
     st.dataframe(kpi_df)
+    # --- QC físico adicional ---
+    from src.quality_checks import apply_meteorological_qc, qc_summary, DEFAULT_QC_CFG
+
+    st.subheader("QC físico (checks meteorológicos)")
+
+    alias_to_canonical = {
+        "temp": "t2m",
+        "hum": "rh",
+        "wind": "ws",
+        "rain": "precip",
+    }
+
+    df_alias = df.rename(columns=alias_to_canonical)
+
+    cfg = DEFAULT_QC_CFG.copy()
+    cfg["time_col"] = "timestamp"
+
+    df_qc_alias = apply_meteorological_qc(df_alias, cfg)
+    summary_qc = qc_summary(df_qc_alias)
+
+    canonical_to_alias = {v: k for k, v in alias_to_canonical.items()}
+    df_qc = df_qc_alias.rename(
+        columns={f"{c}_qc_flag": f"{canonical_to_alias.get(c, c)}_qc_flag" for c in canonical_to_alias}
+    )
+
+    if summary_qc.empty:
+        st.info("Sin flags QC físicos detectados 🎉")
+    else:
+        st.dataframe(summary_qc, use_container_width=True)
+        # --- Exportar resultados QC físico ---
+        st.markdown("#### Exportar QC físico")
+
+        # Markdown resumen
+        md_lines = []
+        md_lines.append("# Informe QC físico — AEMET")
+        md_lines.append(summary_qc.to_markdown(index=False))
+        md_str = "\n\n".join(md_lines).encode("utf-8")
+        st.download_button("⬇️ Descargar informe QC (Markdown)", data=md_str,
+                           file_name="qc_fisico_report.md", mime="text/markdown")
+
+        # CSV resumen
+        csv_bytes = summary_qc.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Descargar resumen QC (CSV)", data=csv_bytes,
+                           file_name="qc_fisico_summary.csv", mime="text/csv")
+
+        # JSON resumen
+        json_bytes = summary_qc.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
+        st.download_button("⬇️ Descargar resumen QC (JSON)", data=json_bytes,
+                           file_name="qc_fisico_summary.json", mime="application/json")
+
+        # --- Filas con incidencias ---
+        if "qc_reasons" in df_qc.columns and df_qc["qc_reasons"].notna().any():
+            st.markdown("#### Filas con flags QC físico")
+            st.dataframe(df_qc[df_qc["qc_reasons"].notna()].head(200))
+
+            inc_csv = df_qc[df_qc["qc_reasons"].notna()].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Descargar incidencias QC (CSV)", data=inc_csv,
+                               file_name="qc_fisico_incidencias.csv", mime="text/csv")
+
 
     # ----Conteo de NO válidos (por columna y global) ----
     rows = []
